@@ -1,0 +1,38 @@
+
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 540px;
+  margin: 40px auto;
+  padding: 0 18px;
+  line-height: 1.6;
+}
+
+h1 {
+  font-size: 1.8rem;
+}
+
+button {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin: 12px 0;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+#message {
+  overflow-wrap: anywhere;
+}
+
+details {
+  margin-top: 24px;
+}
+
+[hidden] {
+  display: none !important;
+}
