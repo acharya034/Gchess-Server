@@ -173,7 +173,7 @@ async function startOAuth() {
     sessionStorage.setItem("oauth_verifier", verifier);
     sessionStorage.setItem("oauth_state", state);
 
-    const authUrl = new URL(CONFIG.authorizeUrl);
+    const authUrl = new URL(CONFIG.oauthAuthorizeUrl);
 
     authUrl.searchParams.set("response_type", "code");
     authUrl.searchParams.set("client_id", CONFIG.clientId);
@@ -193,7 +193,7 @@ async function startOAuth() {
 
 // STEP 2: Validate the access token with Lichess.
 async function validateLichessAccount(accessToken) {
-  const response = await fetch(CONFIG.accountUrl, {
+  const response = await fetch("https://lichess.org/api/account", {
     method: "GET",
     headers: {
       "Authorization": `Bearer ${accessToken}`,
@@ -279,7 +279,7 @@ async function handleOAuthReturn() {
     );
 
     // Exchange the authorization code for an access token.
-    const tokenResponse = await fetch(CONFIG.tokenUrl, {
+    const tokenResponse = await fetch(CONFIG.oauthTokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
