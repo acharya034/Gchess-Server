@@ -3,19 +3,16 @@
 
 // Configure this with your registered Lichess OAuth application.
 const CONFIG = {
-  authorizeUrl: "https://lichess.org/oauth",
-  tokenUrl: "https://lichess.org/api/token",
-  accountUrl: "https://lichess.org/api/account",
-
-  // Replace with your actual registered public OAuth client ID.
+  oauthAuthorizeUrl: "https://lichess.org/oauth",
+  oauthTokenUrl: "https://lichess.org/api/token",
   clientId: "esp32-smart-chessboard",
-  // Must exactly match the redirect URI registered for your app.
-  redirectUri: window.location.origin + window.location.pathname,
-
+  redirectUri: "https://acharya034.github.io/Gchess-Server/",
   scope: "board:play",
 
   startPath: "/pair/start",
-  tokenPath: "/pair/token"
+  tokenPath: "/pair/token",
+  statusPath: "/pair/status",
+  sessionTimeoutMs: 120000
 };
 
 const $ = id => document.getElementById(id);
