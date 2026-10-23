@@ -1,4 +1,3 @@
-
 "use strict";
 
 // Configure this with your registered Lichess OAuth application.
@@ -11,16 +10,13 @@ const CONFIG = {
 
   startPath: "/pair/start",
   tokenPath: "/pair/token",
-  statusPath: "/pair/status",
-  sessionTimeoutMs: 120000
+  statusPath: "/pair/status"
 };
 
 const $ = id => document.getElementById(id);
-
 const params = new URLSearchParams(window.location.search);
 
-let deviceIp = params.get("device") || "";
-let pairSecret = params.get("pair") || "";
+let deviceIp = params.get("d") || "";
 let busy = false;
 
 function setStatus(status, message = "") {
@@ -50,10 +46,10 @@ function validIPv4(ip) {
 
 function boardUrl(path) {
   if (!validIPv4(deviceIp)) {
-    throw new Error("Missing or invalid ESP32 IP address.");
+    throw new Error("Missing or invalid ESP32 IP address. Scan the board QR code again.");
   }
 
-  // HTTP is suitable only for initial local-network testing.
+  // Local-network HTTP is for initial testing.
   return `http://${deviceIp}${path}`;
 }
 
@@ -109,11 +105,7 @@ function base64url(bytes) {
 
 async function createCodeChallenge(verifier) {
   const bytes = new TextEncoder().encode(verifier);
-
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    bytes
-  );
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
 
   return base64url(new Uint8Array(digest));
 }
@@ -122,7 +114,7 @@ function clearOAuthState() {
   sessionStorage.removeItem("oauth_state");
   sessionStorage.removeItem("oauth_verifier");
   sessionStorage.removeItem("board_ip");
-  sessionStorage.removeItem("pair_secret");
+  sessionStorage.removeItem("board_session");
 }
 
 // STEP 1: Start Lichess authorization.
@@ -131,25 +123,15 @@ async function startOAuth() {
 
   try {
     if (!validIPv4(deviceIp)) {
-      throw new Error("The ESP32 IP address is missing or invalid.");
+      throw new Error("The ESP32 IP address is missing or invalid. Scan its QR code again.");
     }
 
-    if (!/^[A-Za-z0-9]{16,}$/.test(pairSecret)) {
-      throw new Error("The pairing secret is missing or invalid.");
-    }
-
-    if (
-      !CONFIG.clientId ||
-      CONFIG.clientId.startsWith("REPLACE_")
-    ) {
+    if (!CONFIG.clientId || CONFIG.clientId.startsWith("REPLACE_")) {
       throw new Error("Configure your registered Lichess client ID.");
     }
 
     if (!window.isSecureContext || !crypto.subtle) {
-      throw new Error(
-        "Secure HTTPS is required for OAuth PKCE. " +
-        "Your current local HTTP website does not meet this requirement."
-      );
+      throw new Error("Secure HTTPS is required for OAuth PKCE.");
     }
 
     busy = true;
@@ -157,14 +139,10 @@ async function startOAuth() {
     $("retry").hidden = true;
     $("cancel").hidden = false;
 
-    setStatus(
-      "Authorizing",
-      "Preparing secure Lichess authorization..."
-    );
+    setStatus("Authorizing", "Preparing secure Lichess authorization...");
 
-    // Save the board information across the Lichess redirect.
+    // Preserve the board IP across the Lichess redirect.
     sessionStorage.setItem("board_ip", deviceIp);
-    sessionStorage.setItem("pair_secret", pairSecret);
 
     const verifier = base64url(randomBytes(32));
     const challenge = await createCodeChallenge(verifier);
@@ -183,9 +161,7 @@ async function startOAuth() {
     authUrl.searchParams.set("code_challenge", challenge);
     authUrl.searchParams.set("code_challenge_method", "S256");
 
-    // Navigate to Lichess. The user signs in on lichess.org.
     window.location.assign(authUrl.toString());
-
   } catch (error) {
     showFailure(error);
   }
@@ -231,11 +207,10 @@ async function handleOAuthReturn() {
 
   if (!code && !oauthError) return;
 
-  // Recover the original board information saved before redirecting.
-  deviceIp = sessionStorage.getItem("board_ip") || "";
-  pairSecret = sessionStorage.getItem("pair_secret") || "";
+  // Recover the board IP saved before the redirect.
+  deviceIp = sessionStorage.getItem("board_ip") || deviceIp;
 
-  // Remove authorization parameters from the address bar.
+  // Remove OAuth parameters from the address bar.
   history.replaceState(
     {},
     document.title,
@@ -244,28 +219,18 @@ async function handleOAuthReturn() {
 
   try {
     if (oauthError) {
-      throw new Error(
-        "Lichess authorization was denied or cancelled."
-      );
+      throw new Error("Lichess authorization was denied or cancelled.");
     }
 
     const expectedState = sessionStorage.getItem("oauth_state");
     const verifier = sessionStorage.getItem("oauth_verifier");
 
-    if (
-      !expectedState ||
-      returnedState !== expectedState ||
-      !verifier
-    ) {
-      throw new Error(
-        "OAuth state verification failed. Please try again."
-      );
+    if (!expectedState || returnedState !== expectedState || !verifier) {
+      throw new Error("OAuth state verification failed. Please try again.");
     }
 
-    if (!validIPv4(deviceIp) || !pairSecret) {
-      throw new Error(
-        "The original board pairing information is missing. Scan the QR again."
-      );
+    if (!validIPv4(deviceIp)) {
+      throw new Error("The original ESP32 IP is missing. Scan the board QR code again.");
     }
 
     busy = true;
@@ -273,10 +238,7 @@ async function handleOAuthReturn() {
     $("retry").hidden = true;
     $("cancel").hidden = false;
 
-    setStatus(
-      "Authorizing",
-      "Exchanging the authorization code with Lichess..."
-    );
+    setStatus("Authorizing", "Exchanging the authorization code with Lichess...");
 
     // Exchange the authorization code for an access token.
     const tokenResponse = await fetch(CONFIG.oauthTokenUrl, {
@@ -308,30 +270,25 @@ async function handleOAuthReturn() {
       throw new Error("Lichess did not return an access token.");
     }
 
-    // Verify the token and get the account's actual username.
     setStatus("Verifying account", "Checking the Lichess account...");
 
-    const account = await validateLichessAccount(
-      tokenData.access_token
-    );
+    const account = await validateLichessAccount(tokenData.access_token);
 
     setStatus(
       "Account verified",
       `Lichess account: ${account.username}. Starting board pairing...`
     );
 
-    // Start a fresh pairing session AFTER OAuth finishes.
-    const session = await boardRequest(CONFIG.startPath, {
-      pairSecret
-    });
+    // Start a pairing session. No pairing secret is sent.
+    const session = await boardRequest(CONFIG.startPath, {});
 
     if (!session.sessionId) {
-      throw new Error(
-        "ESP32 did not return a pairing session ID."
-      );
+      throw new Error("ESP32 did not return a pairing session ID.");
     }
 
-    // Send the verified account's token to the ESP32.
+    sessionStorage.setItem("board_session", session.sessionId);
+
+    // Send the token and session ID to the ESP32.
     setStatus(
       "Pairing",
       `Sending the token for ${account.username} to the chessboard...`
@@ -339,29 +296,23 @@ async function handleOAuthReturn() {
 
     const result = await boardRequest(CONFIG.tokenPath, {
       sessionId: session.sessionId,
-      pairSecret,
       accessToken: tokenData.access_token
     });
 
     if (result.stored !== true) {
-      throw new Error(
-        "ESP32 did not confirm that the token was stored."
-      );
+      throw new Error("ESP32 did not confirm that the token was stored.");
     }
 
     clearOAuthState();
 
-    sessionStorage.removeItem("board_session");
-
     setStatus(
       "Connected",
-      `Lichess account ${account.username} verified. ` +
-      "The chessboard confirmed token storage."
+      `Lichess account ${account.username} verified. The chessboard confirmed token storage.`
     );
 
+    $("connect").disabled = false;
     $("cancel").hidden = true;
     $("retry").hidden = true;
-
   } catch (error) {
     showFailure(error);
   } finally {
@@ -369,20 +320,28 @@ async function handleOAuthReturn() {
   }
 }
 
-// Show the board IP on the page.
+// Display the board IP.
 $("deviceIp").textContent = validIPv4(deviceIp)
   ? deviceIp
   : "Missing or invalid";
 
-// Wire up the existing HTML buttons.
+// Wire up the HTML buttons.
 $("connect").addEventListener("click", startOAuth);
 
 $("retry").addEventListener("click", () => {
   clearOAuthState();
 
-  // Restore original QR parameters if retrying on the initial page.
-  deviceIp = params.get("device") || "";
-  pairSecret = params.get("pair") || "";
+  // Read the IP from the current QR URL.
+  deviceIp = params.get("d") || "";
+
+  // If retrying after an OAuth redirect, the URL may no longer contain
+  // the device parameter. Ask the user to scan the QR code again.
+  if (!validIPv4(deviceIp)) {
+    setStatus("Scan QR again", "Open the website using the ESP32 QR code.");
+    $("retry").hidden = false;
+    $("connect").disabled = false;
+    return;
+  }
 
   startOAuth();
 });
@@ -390,15 +349,12 @@ $("retry").addEventListener("click", () => {
 $("cancel").addEventListener("click", () => {
   clearOAuthState();
 
-  setStatus(
-    "Not connected",
-    "Authorization cancelled. You can start again."
-  );
+  setStatus("Not connected", "Authorization cancelled. You can start again.");
 
   $("connect").disabled = false;
   $("retry").hidden = true;
   $("cancel").hidden = true;
 });
 
-// If Lichess redirected back with an authorization code, process it.
+// Process the redirect from Lichess, if present.
 handleOAuthReturn().catch(showFailure);
